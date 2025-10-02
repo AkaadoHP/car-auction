@@ -7,7 +7,7 @@
 # Each table has:
 #   - full lot details
 #   - analytics columns (hours_to_run, image_count, etc.)
-#   - normalized fields for fast filtering (as plain TEXT columns)
+#   - normalized fields for fast filtering
 #   - strong indexes (btree + trigram)
 
 import os
@@ -26,7 +26,7 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 """
 
-# Normalized columns (plain text, no GENERATED ALWAYS)
+# Normalized text columns
 NORM_COLS = [
     "make_norm",
     "model_norm",
@@ -35,10 +35,17 @@ NORM_COLS = [
     "color_norm",
     "state_norm",
     "yard_norm",
-    "damage_primary_norm"
+    "title_norm",
+    "damage_primary_norm",
+    "damage_secondary_norm"
 ]
-
 NORM_DEF = ",\n    ".join(f"{n} TEXT" for n in NORM_COLS)
+
+# Extra normalized numerics
+EXTRA_NORM_COLS = """
+    odometer_miles NUMERIC,
+    odometer_km NUMERIC
+"""
 
 # Base snapshot schema
 SNAPSHOT_BASE = f"""
@@ -86,9 +93,13 @@ SNAPSHOT_BASE = f"""
     -- normalized fields (plain text, filled during refresh)
     {NORM_DEF},
 
+    -- extra normalized numerics
+    {EXTRA_NORM_COLS},
+
     PRIMARY KEY (lot_id, broker_id)
 """
 
+# Create tables
 CREATE_TBL_24H  = f"CREATE TABLE IF NOT EXISTS tbl_next_24h (\n{SNAPSHOT_BASE}\n);"
 CREATE_TBL_2H   = f"CREATE TABLE IF NOT EXISTS tbl_next_2h  (\n{SNAPSHOT_BASE}\n);"
 CREATE_TBL_LIVE = f"CREATE TABLE IF NOT EXISTS tbl_live     (\n{SNAPSHOT_BASE}\n);"
@@ -105,12 +116,16 @@ CREATE INDEX IF NOT EXISTS {t}_idx_year ON {t} (year);
 CREATE INDEX IF NOT EXISTS {t}_idx_latest_prebid ON {t} (latest_prebid);
 CREATE INDEX IF NOT EXISTS {t}_idx_latest_buynow ON {t} (latest_buy_now);
 CREATE INDEX IF NOT EXISTS {t}_idx_odometer ON {t} (odometer);
+CREATE INDEX IF NOT EXISTS {t}_idx_odometer_miles ON {t} (odometer_miles);
+CREATE INDEX IF NOT EXISTS {t}_idx_odometer_km ON {t} (odometer_km);
 
 -- composites
 CREATE INDEX IF NOT EXISTS {t}_idx_make_model_year ON {t} (make_norm, model_norm, year);
 CREATE INDEX IF NOT EXISTS {t}_idx_state_yard ON {t} (state_norm, yard_norm);
 CREATE INDEX IF NOT EXISTS {t}_idx_status ON {t} (status);
-CREATE INDEX IF NOT EXISTS {t}_idx_damage ON {t} (damage_primary_norm);
+CREATE INDEX IF NOT EXISTS {t}_idx_title_norm ON {t} (title_norm);
+CREATE INDEX IF NOT EXISTS {t}_idx_damage_primary_norm ON {t} (damage_primary_norm);
+CREATE INDEX IF NOT EXISTS {t}_idx_damage_secondary_norm ON {t} (damage_secondary_norm);
 
 -- fuzzy search
 CREATE INDEX IF NOT EXISTS {t}_gin_make_norm  ON {t} USING GIN (make_norm gin_trgm_ops);
@@ -128,7 +143,7 @@ def run():
         for t in ("tbl_next_24h", "tbl_next_2h", "tbl_live"):
             conn.execute(text(INDEXES_TMPL.replace("{t}", t)))
 
-    print("✅ Phase 3 snapshot tables created successfully:")
+    print("✅ Phase 3 snapshot tables created successfully with normalization:")
     print("   tbl_next_24h, tbl_next_2h, tbl_live")
 
 if __name__ == "__main__":
